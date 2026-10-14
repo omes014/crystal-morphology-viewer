@@ -1,0 +1,12 @@
+# This repository holds only the 3D viewer and derived crystal geometry.
+# Raw Morphologi / QICPIC measurement data must never be committed.
+*.csv
+*.xlsx
+*.xls
+*.txt
+*.nc
+*.pkl
+*.npy
+*.zip
+.cache/
+.DS_Store

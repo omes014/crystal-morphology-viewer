@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crystal Morphology Viewer</title>
+<meta name="description" content="Original (CSD VisualHabit) and GA-optimised crystal morphologies, faces coloured by {hkl} family.">
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --border: #dde1e6; --text: #1d2228;
+    --muted: #5f6b78; --accent: #2b5fab; --accent-text: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; }
+  #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #reset {
+    position: absolute; right: 12px; top: 12px;
+  }
+  aside {
+    width: 340px; flex-shrink: 0; overflow-y: auto; padding: 16px;
+    background: var(--panel); border-left: 1px solid var(--border);
+  }
+  label.h, .h { display: block; font-size: 12px; font-weight: 600; color: var(--muted);
+                text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+  section + section { margin-top: 18px; }
+  select, button {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  }
+  select { width: 100%; }
+  button:hover { border-color: var(--muted); }
+  .seg { display: flex; }
+  .seg button { flex: 1; border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+  .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .seg button[aria-pressed="true"] {
+    background: var(--accent); color: var(--accent-text); border-color: var(--accent);
+    position: relative;
+  }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 4px 6px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); }
+  tbody tr + tr td { border-top: 1px solid var(--border); }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+        vertical-align: -1px; margin-right: 7px; border: 1px solid rgba(0,0,0,.25); }
+  .ob { text-decoration: overline; }
+  .better { color: #1b7a3a; }
+  .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  #msg { position: absolute; inset: 0; display: flex; align-items: center;
+         justify-content: center; color: var(--muted); pointer-events: none; }
+  @media (max-width: 760px) {
+    main { flex-direction: column; }
+    #stage { flex: none; height: 58vh; }
+    aside { width: auto; border-left: 0; border-top: 1px solid var(--border); }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <h1>Crystal morphology: original vs GA-optimised</h1>
+  <p>Original shape from CSD VisualHabit; optimised shape from anisotropic OBB scaling to the GA-best (r<sub>1</sub>, r<sub>2</sub>). Both shapes are scaled to equal volume.</p>
+</header>
+<main>
+  <div id="stage">
+    <div id="msg">Loading…</div>
+    <button id="reset" type="button">Reset view</button>
+  </div>
+  <aside>
+    <section>
+      <label class="h" for="material">Material</label>
+      <select id="material"></select>
+    </section>
+    <section>
+      <span class="h">View</span>
+      <div class="seg" role="group" aria-label="View mode">
+        <button type="button" data-mode="orig">Original</button>
+        <button type="button" data-mode="opt">Optimised</button>
+        <button type="button" data-mode="overlay">Overlay</button>
+      </div>
+      <p class="note" id="mode-note"></p>
+    </section>
+    <section>
+      <span class="h">Shape parameters</span>
+      <table>
+        <thead><tr><th></th><th>Original</th><th>Optimised</th></tr></thead>
+        <tbody id="params"></tbody>
+      </table>
+      <p class="note">r<sub>1</sub> = M/L, r<sub>2</sub> = S/L of the oriented bounding box. KS = composite two-sample KS statistic (aspect ratio, sphericity) vs experiment; lower is better.</p>
+    </section>
+    <section>
+      <span class="h">Face families: area fraction</span>
+      <table>
+        <thead><tr><th>{hkl}</th><th>Original</th><th>Optimised</th></tr></thead>
+        <tbody id="legend"></tbody>
+      </table>
+      <p class="note">Deformation tilts faces off their (hkl) planes; on the optimised shape each colour marks the face descended from that (hkl).</p>
+    </section>
+  </aside>
+</main>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// Categorical palette, assigned to families in sorted order per material.
+const PALETTE = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948",
+                 "#b07aa1", "#ff9da7", "#9c755f", "#86bcb6", "#a0cbe8", "#bab0ac"];
+const MODE_NOTES = {
+  orig: "CSD VisualHabit morphology.",
+  opt: "GA-optimised morphology.",
+  overlay: "Optimised (solid) with original (wireframe).",
+};
+
+const stage = document.getElementById("stage");
+const msg = document.getElementById("msg");
+const select = document.getElementById("material");
+const modeButtons = [...document.querySelectorAll(".seg button")];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0xffffff, 1);
+stage.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f99, 1.6));
+const key = new THREE.DirectionalLight(0xffffff, 1.4);
+key.position.set(1, 1.5, 2);
+camera.add(key);                       // light follows the camera
+scene.add(camera);
+
+const group = new THREE.Group();
+scene.add(group);
+
+let mode = "orig";
+let current = null;                    // { solidOrig, solidOpt, edgesOrig, edgesOpt, wireOrig }
+
+function familyKey(f) { return f.join(","); }
+
+function hklHTML(hkl) {
+  return hkl.map(h => h < 0 ? `<span class="ob">${-h}</span>` : `${h}`).join("");
+}
+
+function buildSolid(vertices, faces, colourOf) {
+  const pos = [], col = [];
+  const c = new THREE.Color();
+  for (const face of faces) {
+    c.set(colourOf(face.family));
+    for (const tri of face.triangles) {
+      for (const i of tri) {
+        pos.push(...vertices[i]);
+        col.push(c.r, c.g, c.b);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();            // non-indexed -> flat per-triangle normals
+  return g;
+}
+
+function makeShape(vertices, faces, colourOf) {
+  const geom = buildSolid(vertices, faces, colourOf);
+  const solid = new THREE.Mesh(geom, new THREE.MeshStandardMaterial({
+    vertexColors: true, flatShading: true, roughness: 0.65, metalness: 0,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+  }));
+  // Facet outlines only (coplanar triangulation edges suppressed).
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geom, 1),
+    new THREE.LineBasicMaterial({ color: 0x1d2228 }));
+  return { solid, edges, geom };
+}
+
+function setMode(m) {
+  mode = m;
+  if (select.value) history.replaceState(null, "", `#${select.value}/${m}`);
+  modeButtons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  document.getElementById("mode-note").textContent = MODE_NOTES[m];
+  if (!current) return;
+  const s = current;
+  s.orig.solid.visible = m === "orig";
+  s.orig.edges.visible = m === "orig";
+  s.opt.solid.visible = m !== "orig";
+  s.opt.edges.visible = m !== "orig";
+  s.wire.visible = m === "overlay";
+  // Overlay: translucent optimised solid so the full original outline shows.
+  const mat = s.opt.solid.material;
+  mat.transparent = m === "overlay";
+  mat.opacity = m === "overlay" ? 0.55 : 1;
+  mat.depthWrite = m !== "overlay";
+  mat.needsUpdate = true;
+}
+
+function resetView() {
+  if (!current) return;
+  const r = current.radius;
+  const dist = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.1;
+  camera.position.set(dist * 0.55, dist * 0.45, dist * 0.70);
+  camera.up.set(0, 1, 0);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
+function disposeCurrent() {
+  if (!current) return;
+  group.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+  group.clear();
+  current = null;
+}
+
+function fmt(x, d = 3) { return Number(x).toFixed(d); }
+function pct(x) { return x > 0 && x < 0.0005 ? "<0.1%" : (100 * x).toFixed(1) + "%"; }
+
+function renderPanel(d, families, colourOf) {
+  const rows = [
+    ["r<sub>1</sub>", d.r1_orig, d.r1_opt, 4, false],
+    ["r<sub>2</sub>", d.r2_orig, d.r2_opt, 4, false],
+    ["KS", d.ks_orig, d.ks_opt, 4, true],
+  ];
+  document.getElementById("params").innerHTML = rows.map(([n, a, b, dp, lowerBetter]) =>
+    `<tr><td>${n}</td><td>${fmt(a, dp)}</td><td class="${lowerBetter && b < a ? "better" : ""}">${fmt(b, dp)}</td></tr>`
+  ).join("");
+
+  document.getElementById("legend").innerHTML = families.map(f =>
+    `<tr><td><span class="sw" style="background:${colourOf(f.family)}"></span>{${hklHTML(f.family)}}</td>` +
+    `<td>${pct(f.orig)}</td><td>${pct(f.opt)}</td></tr>`
+  ).join("");
+}
+
+async function loadMaterial(refcode) {
+  msg.textContent = "Loading…";
+  msg.style.display = "flex";
+  const d = await (await fetch(`data/${refcode}.json`)).json();
+  disposeCurrent();
+
+  // Aggregate area fractions per {hkl} family; fix colours by sorted family order.
+  const fam = new Map();
+  for (const f of d.faces) {
+    const k = familyKey(f.family);
+    const e = fam.get(k) ?? { family: f.family, orig: 0, opt: 0 };
+    e.orig += f.area_frac_orig; e.opt += f.area_frac_opt;
+    fam.set(k, e);
+  }
+  const families = [...fam.values()].sort((a, b) => b.orig - a.orig);
+  const colours = new Map(families.map((f, i) => [familyKey(f.family), PALETTE[i % PALETTE.length]]));
+  const colourOf = f => colours.get(familyKey(f));
+
+  const orig = makeShape(d.vertices_orig, d.faces, colourOf);
+  const opt = makeShape(d.vertices_opt, d.faces, colourOf);
+  const wire = new THREE.LineSegments(new THREE.EdgesGeometry(orig.geom, 1),
+    new THREE.LineBasicMaterial({ color: 0x111111 }));
+  wire.renderOrder = 1;
+  group.add(orig.solid, orig.edges, opt.solid, opt.edges, wire);
+
+  const radius = Math.max(...[...d.vertices_orig, ...d.vertices_opt].map(v => Math.hypot(...v)));
+  current = { orig, opt, wire, radius };
+  renderPanel(d, families, colourOf);
+  setMode(mode);
+  resetView();
+  msg.style.display = "none";
+}
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+modeButtons.forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+document.getElementById("reset").addEventListener("click", resetView);
+select.addEventListener("change", () => {
+  history.replaceState(null, "", `#${select.value}/${mode}`);
+  loadMaterial(select.value);
+});
+
+(async () => {
+  try {
+    const index = await (await fetch("data/index.json")).json();
+    select.innerHTML = index.map(m => `<option value="${m.refcode}">${m.refcode}: ${m.name}</option>`).join("");
+    // Deep link: #REFCODE or #REFCODE/{orig|opt|overlay}
+    const [hashRef, hashMode] = location.hash.slice(1).split("/");
+    if (index.some(m => m.refcode === hashRef)) select.value = hashRef;
+    if (hashMode in MODE_NOTES) mode = hashMode;
+    setMode(mode);
+    await loadMaterial(select.value);
+  } catch (e) {
+    msg.textContent = "Could not load data. Serve this folder over HTTP (e.g. python -m http.server).";
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>

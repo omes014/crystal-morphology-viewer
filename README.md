@@ -4,7 +4,7 @@ Interactive 3D comparison of the original (CSD VisualHabit) and genetic-algorith
 morphologies of five pharmaceutical materials, supplementing the static figures in the PhD thesis
 *ML Prediction of Pharmaceutical Flow Behavior* (O. El Habbak, University of Strathclyde).
 
-**Open the viewer:** https://REPLACE-WITH-PAGES-URL/
+**Open the viewer:** https://omes014.github.io/crystal-morphology-viewer/
 
 Direct links: `#REFCODE/orig`, `#REFCODE/opt` or `#REFCODE/overlay`, for example `#CEKBEZ/overlay`.
 
